@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Food Awareness Analyst</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Inter font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7fafc;
+        }
+        .section-title {
+            position: relative;
+            padding-bottom: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .section-title::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 50px;
+            height: 3px;
+            background-color: #3b82f6; /* Blue-500 */
+            border-radius: 9999px;
+        }
+        .loading-dot {
+            animation: dot-pulse 1.5s infinite;
+            display: inline-block;
+            margin: 0 2px;
+        }
+        .loading-dot:nth-child(1) { animation-delay: 0.0s; }
+        .loading-dot:nth-child(2) { animation-delay: 0.3s; }
+        .loading-dot:nth-child(3) { animation-delay: 0.6s; }
+        @keyframes dot-pulse {
+            0%, 80%, 100% { opacity: 0.2; transform: scale(1); }
+            40% { opacity: 1; transform: scale(1.2); }
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8 flex justify-center items-start min-h-screen">
+
+    <div id="app" class="w-full max-w-4xl space-y-8">
+        <!-- Header -->
+        <header class="text-center space-y-2 mb-8">
+            <h1 class="text-4xl font-extrabold text-gray-900">Food Analyst AI</h1>
+            <p class="text-lg text-gray-500">
+                Enter any food item, recipe, or ingredient list for a detailed health analysis.
+            </p>
+        </header>
+
+        <!-- Input Section -->
+        <section class="bg-white p-6 sm:p-8 rounded-xl shadow-2xl border border-gray-100">
+            <label for="foodInput" class="block text-lg font-semibold text-gray-700 mb-3">What would you like to analyze?</label>
+            <textarea id="foodInput" rows="4"
+                      placeholder="e.g., '1 cup of cooked quinoa and 1/2 avocado', or 'Recipe for chocolate chip cookies with 2 cups of sugar'"
+                      class="w-full p-4 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out resize-none text-gray-800"></textarea>
+
+            <button id="analyzeButton"
+                    class="mt-4 w-full sm:w-auto px-6 py-3 bg-blue-600 text-white font-semibold text-lg rounded-xl hover:bg-blue-700 transition duration-200 ease-in-out shadow-lg transform hover:scale-[1.01] active:scale-[0.99]"
+                    onclick="analyzeFood()">
+                Analyze Food
+            </button>
+        </section>
+
+        <!-- Loading Indicator & Results Section -->
+        <section id="resultContainer" class="hidden">
+            <!-- Loading State -->
+            <div id="loading" class="hidden text-center py-12">
+                <div class="text-blue-600 text-2xl font-bold">
+                    Analyzing ingredients
+                    <span class="loading-dot">.</span>
+                    <span class="loading-dot">.</span>
+                    <span class="loading-dot">.</span>
+                </div>
+                <p class="text-gray-500 mt-2">Connecting to health databases and expert systems...</p>
+            </div>
+
+            <!-- Analysis Result Card -->
+            <div id="analysisResult" class="hidden bg-white p-6 sm:p-8 rounded-xl shadow-2xl border border-gray-100 space-y-6">
+                <h2 class="text-3xl font-bold text-gray-900 section-title">Analysis Complete</h2>
+                <div id="resultContent" class="text-gray-700 leading-relaxed whitespace-pre-wrap"></div>
+
+                <!-- Source Attribution -->
+                <div id="sources" class="pt-4 border-t border-gray-200">
+                    <p class="text-sm font-semibold text-gray-600 mb-2">Sources Grounding This Information:</p>
+                    <ul id="sourceList" class="list-disc list-inside text-sm text-gray-500 space-y-1">
+                        <!-- Sources will be injected here -->
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Error Message -->
+            <div id="errorBox" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl relative">
+                <strong class="font-bold">Error:</strong>
+                <span id="errorMessage" class="block sm:inline"></span>
+            </div>
+        </section>
+
+    </div>
+
+    <script type="module">
+        // Basic configuration
+        const API_KEY = ""; // Canvas will automatically provide the key at runtime
+        const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+        const MAX_RETRIES = 5;
+        const INITIAL_BACKOFF = 1000;
+
+        const foodInput = document.getElementById('foodInput');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const resultContainer = document.getElementById('resultContainer');
+        const loading = document.getElementById('loading');
+        const analysisResult = document.getElementById('analysisResult');
+        const resultContent = document.getElementById('resultContent');
+        const errorBox = document.getElementById('errorBox');
+        const errorMessage = document.getElementById('errorMessage');
+        const sourceList = document.getElementById('sourceList');
+
+        /**
+         * Converts the structured array of sources into HTML list items.
+         * @param {Array<{uri: string, title: string}>} sources - Array of grounding sources.
+         * @returns {string} HTML string for the list.
+         */
+        function renderSources(sources) {
+            if (!sources || sources.length === 0) {
+                return '<li>No specific external web sources were used to ground this response.</li>';
+            }
+            return sources.map(source => `
+                <li>
+                    <a href="${source.uri}" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:text-blue-700 underline transition duration-150">
+                        ${source.title}
+                    </a>
+                    <span class="text-xs text-gray-400 ml-2">(${new URL(source.uri).hostname})</span>
+                </li>
+            `).join('');
+        }
+
+        /**
+         * Calls the Gemini API with exponential backoff for food analysis.
+         * @param {string} promptText - The user's input (food/recipe).
+         * @param {number} retryCount - Current retry attempt count.
+         */
+        async function fetchWithRetry(promptText, retryCount = 0) {
+            const systemPrompt = `You are a friendly and professional Food Health Analyst. When given a food item, recipe, or list of ingredients, provide a detailed, objective analysis. Your response MUST be structured clearly for readability with section headings (e.g., 'Summary', 'Allergens & Concerns', 'Healthy Alternatives'). 
+                1. Summary & Key Nutritional Facts (concise paragraph).
+                2. Potential Allergens & Concerns (list of common allergens, or health concerns like high sugar, high sodium, saturated fats).
+                3. Healthy Alternatives (one or two simple substitutions or recipe ideas).
+                Maintain a helpful, informative, and easy-to-understand tone.`;
+            
+            const payload = {
+                contents: [{ parts: [{ text: promptText }] }],
+                tools: [{ "google_search": {} }], // Enable search grounding
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    if (response.status === 429 && retryCount < MAX_RETRIES) {
+                        const backoffTime = INITIAL_BACKOFF * Math.pow(2, retryCount) + Math.random() * 1000;
+                        await new Promise(resolve => setTimeout(resolve, backoffTime));
+                        return fetchWithRetry(promptText, retryCount + 1);
+                    }
+                    throw new Error(`API Request failed with status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                const candidate = result.candidates?.[0];
+
+                if (candidate && candidate.content?.parts?.[0]?.text) {
+                    const text = candidate.content.parts[0].text;
+                    
+                    let sources = [];
+                    const groundingMetadata = candidate.groundingMetadata;
+                    if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                        sources = groundingMetadata.groundingAttributions
+                            .map(attribution => ({
+                                uri: attribution.web?.uri,
+                                title: attribution.web?.title,
+                            }))
+                            .filter(source => source.uri && source.title); // Ensure sources are valid
+                    }
+                    
+                    return { text, sources };
+                } else {
+                    throw new Error("Received an empty or malformed response from the model.");
+                }
+
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+                throw new Error("Failed to connect or process the food analysis request.");
+            }
+        }
+
+        // Main analysis function
+        window.analyzeFood = async function() {
+            const prompt = foodInput.value.trim();
+            if (!prompt) {
+                showError("Please enter a food item, recipe, or ingredient list to analyze.");
+                return;
+            }
+
+            // Reset UI and show loading
+            resultContainer.classList.remove('hidden');
+            analysisResult.classList.add('hidden');
+            errorBox.classList.add('hidden');
+            loading.classList.remove('hidden');
+            analyzeButton.disabled = true;
+            analyzeButton.textContent = "Analyzing...";
+
+            try {
+                const { text, sources } = await fetchWithRetry(prompt);
+
+                // Update results UI
+                resultContent.innerHTML = formatMarkdownToHtml(text);
+                sourceList.innerHTML = renderSources(sources);
+                
+                analysisResult.classList.remove('hidden');
+
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                // Hide loading and re-enable button
+                loading.classList.add('hidden');
+                analyzeButton.disabled = false;
+                analyzeButton.textContent = "Analyze Food";
+            }
+        }
+        
+        // Utility function to display errors
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorBox.classList.remove('hidden');
+            analysisResult.classList.add('hidden');
+        }
+
+        /**
+         * Simple function to convert basic markdown formatting (headers, lists, bold) to HTML.
+         */
+        function formatMarkdownToHtml(markdown) {
+            let html = markdown;
+            
+            // Replace bold text: **text** or __text__ -> <strong>text</strong>
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+
+            // Replace headers (H2 and H3-like formatting) with styling
+            html = html.replace(/### (.*?)\n/g, '<h3 class="text-xl font-bold text-gray-800 mt-4 mb-2 section-title">$1</h3>\n');
+            html = html.replace(/## (.*?)\n/g, '<h2 class="text-2xl font-bold text-gray-800 mt-6 mb-3 section-title">$1</h2>\n');
+
+            // Replace list items: * item or - item -> <ul><li>item
+            html = html.replace(/(\* | - )([^\n]+)/g, '<li>$2</li>');
+            html = html.replace(/(<li>.*?<\/li>)/gs, (match) => {
+                // Wrap list items that are consecutive in an unordered list
+                if (match.startsWith('<li>') && !match.includes('</ul')) {
+                    return `<ul>${match}</ul>`;
+                }
+                return match;
+            });
+            // Clean up potentially multiple <ul> tags created by the simple regex above
+            html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+
+            // Replace newlines with paragraph breaks, but respect list structure
+            html = html.replace(/(\r\n|\n\r|\r|\n)/g, (match, p1, offset, string) => {
+                // If the surrounding text is a list item or a header, keep a simple newline
+                const contextCheck = string.substring(offset - 10, offset + 10);
+                if (contextCheck.includes('<li>') || contextCheck.includes('<h')) {
+                    return '\n';
+                }
+                // Otherwise, treat it as a new paragraph
+                return '</p><p>';
+            });
+            
+            // Wrap the whole thing in a <p> tag if it doesn't start with a known block element
+            if (!html.trim().match(/<h|<ul|<p/i)) {
+                html = `<p>${html}</p>`;
+            }
+            
+            // Replace any leading/trailing empty <p> tags
+            html = html.replace(/<p><\/p>/g, '').trim();
+
+            return html;
+        }
+
+    </script>
+</body>
+</html>
