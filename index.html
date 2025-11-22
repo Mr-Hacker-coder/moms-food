@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Food Awareness Analyst</title>
+    
+    <!-- !!! START GOOGLE ANALYTICS CODE (OPTIONAL) !!! -->
+    <!-- 
+        If you completed the previous step, paste your Google Analytics script here.
+    -->
+    <!-- !!! END GOOGLE ANALYTICS CODE !!! -->
+    
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Load Inter font -->
@@ -49,21 +56,33 @@
         <header class="text-center space-y-2 mb-8">
             <h1 class="text-4xl font-extrabold text-gray-900">Food Analyst AI</h1>
             <p class="text-lg text-gray-500">
-                Enter any food item, recipe, or ingredient list for a detailed health analysis.
+                Analyze food from a photo, a recipe, or an ingredient list!
             </p>
         </header>
 
         <!-- Input Section -->
         <section class="bg-white p-6 sm:p-8 rounded-xl shadow-2xl border border-gray-100">
-            <label for="foodInput" class="block text-lg font-semibold text-gray-700 mb-3">What would you like to analyze?</label>
-            <textarea id="foodInput" rows="4"
-                      placeholder="e.g., '1 cup of cooked quinoa and 1/2 avocado', or 'Recipe for chocolate chip cookies with 2 cups of sugar'"
+            
+            <label for="foodImageInput" class="block text-lg font-semibold text-gray-700 mb-2">1. Upload a Photo (Optional)</label>
+            <input type="file" id="foodImageInput" accept="image/*" 
+                   class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out text-gray-800 mb-4"
+                   onchange="previewImage(event)">
+
+            <!-- Image Preview -->
+            <div id="imagePreviewContainer" class="hidden mb-4 p-3 border border-gray-200 rounded-lg bg-gray-50">
+                <p class="text-sm font-medium text-gray-600 mb-2">Image Preview:</p>
+                <img id="imagePreview" class="max-w-full h-auto rounded-lg shadow-md mx-auto max-h-48 object-contain" src="#" alt="Food Image Preview">
+            </div>
+
+            <label for="foodInput" class="block text-lg font-semibold text-gray-700 mb-3">2. Describe or Ask Questions (Mandatory)</label>
+            <textarea id="foodInput" rows="3"
+                      placeholder="e.g., 'Analyze the nutrients in the dish above', or 'What are the main ingredients in this photo?'"
                       class="w-full p-4 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out resize-none text-gray-800"></textarea>
 
             <button id="analyzeButton"
                     class="mt-4 w-full sm:w-auto px-6 py-3 bg-blue-600 text-white font-semibold text-lg rounded-xl hover:bg-blue-700 transition duration-200 ease-in-out shadow-lg transform hover:scale-[1.01] active:scale-[0.99]"
                     onclick="analyzeFood()">
-                Analyze Food
+                Analyze Food (Text & Image)
             </button>
         </section>
 
@@ -105,13 +124,17 @@
 
     <script type="module">
         // Basic configuration
-        const API_KEY = ""; // Canvas will automatically provide the key at runtime
+        // !!! IMPORTANT: If running locally, replace "" with your actual Gemini API Key !!!
+        const API_KEY = ""; 
         const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
         const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
         const MAX_RETRIES = 5;
         const INITIAL_BACKOFF = 1000;
 
         const foodInput = document.getElementById('foodInput');
+        const foodImageInput = document.getElementById('foodImageInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const imagePreviewContainer = document.getElementById('imagePreviewContainer');
         const analyzeButton = document.getElementById('analyzeButton');
         const resultContainer = document.getElementById('resultContainer');
         const loading = document.getElementById('loading');
@@ -122,9 +145,40 @@
         const sourceList = document.getElementById('sourceList');
 
         /**
+         * Utility function to convert a file to a Base64 string.
+         * @param {File} file - The image file to convert.
+         * @returns {Promise<string>} Base64 encoded string of the image data.
+         */
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]); // Only get the data part
+                reader.onerror = error => reject(error);
+                reader.readAsDataURL(file);
+            });
+        }
+        
+        /**
+         * Handles the image preview when a file is selected.
+         */
+        window.previewImage = function(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    imagePreview.src = e.target.result;
+                    imagePreviewContainer.classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            } else {
+                imagePreview.src = '#';
+                imagePreviewContainer.classList.add('hidden');
+            }
+        }
+
+        /**
          * Converts the structured array of sources into HTML list items.
-         * @param {Array<{uri: string, title: string}>} sources - Array of grounding sources.
-         * @returns {string} HTML string for the list.
+         * (Remains the same as before)
          */
         function renderSources(sources) {
             if (!sources || sources.length === 0) {
@@ -142,18 +196,18 @@
 
         /**
          * Calls the Gemini API with exponential backoff for food analysis.
-         * @param {string} promptText - The user's input (food/recipe).
+         * @param {Array<Object>} contentParts - Array of content parts (text and image data).
          * @param {number} retryCount - Current retry attempt count.
          */
-        async function fetchWithRetry(promptText, retryCount = 0) {
-            const systemPrompt = `You are a friendly and professional Food Health Analyst. When given a food item, recipe, or list of ingredients, provide a detailed, objective analysis. Your response MUST be structured clearly for readability with section headings (e.g., 'Summary', 'Allergens & Concerns', 'Healthy Alternatives'). 
-                1. Summary & Key Nutritional Facts (concise paragraph).
-                2. Potential Allergens & Concerns (list of common allergens, or health concerns like high sugar, high sodium, saturated fats).
-                3. Healthy Alternatives (one or two simple substitutions or recipe ideas).
+        async function fetchWithRetry(contentParts, retryCount = 0) {
+            const systemPrompt = `You are a friendly and professional Food Health Analyst. Analyze the input, which may include text, a photo, or both. If a photo is provided, focus your analysis on the visible food. Provide a detailed, objective analysis structured clearly:
+                1. **Summary & Key Nutritional Facts:** (Identify the dish/ingredients and summarize key nutrients).
+                2. **Potential Allergens & Concerns:** (List common allergens and health concerns like high sodium or sugar).
+                3. **Healthy Alternatives:** (Provide one or two simple substitutions or modifications).
                 Maintain a helpful, informative, and easy-to-understand tone.`;
             
             const payload = {
-                contents: [{ parts: [{ text: promptText }] }],
+                contents: [{ parts: contentParts }],
                 tools: [{ "google_search": {} }], // Enable search grounding
                 systemInstruction: { parts: [{ text: systemPrompt }] },
             };
@@ -169,7 +223,7 @@
                     if (response.status === 429 && retryCount < MAX_RETRIES) {
                         const backoffTime = INITIAL_BACKOFF * Math.pow(2, retryCount) + Math.random() * 1000;
                         await new Promise(resolve => setTimeout(resolve, backoffTime));
-                        return fetchWithRetry(promptText, retryCount + 1);
+                        return fetchWithRetry(contentParts, retryCount + 1);
                     }
                     throw new Error(`API Request failed with status: ${response.status}`);
                 }
@@ -205,9 +259,15 @@
         // Main analysis function
         window.analyzeFood = async function() {
             const prompt = foodInput.value.trim();
-            if (!prompt) {
-                showError("Please enter a food item, recipe, or ingredient list to analyze.");
+            const imageFile = foodImageInput.files[0];
+
+            if (!prompt && !imageFile) {
+                showError("Please provide a food description or upload a photo to analyze.");
                 return;
+            }
+            if (!prompt && imageFile) {
+                 showError("Please provide a text prompt to tell the AI what to analyze in the photo (e.g., 'Analyze the nutrients in this dish').");
+                 return;
             }
 
             // Reset UI and show loading
@@ -219,7 +279,23 @@
             analyzeButton.textContent = "Analyzing...";
 
             try {
-                const { text, sources } = await fetchWithRetry(prompt);
+                const contentParts = [];
+                
+                // 1. Add image data if file exists
+                if (imageFile) {
+                    const base64Data = await fileToBase64(imageFile);
+                    contentParts.push({
+                        inlineData: {
+                            mimeType: imageFile.type,
+                            data: base64Data
+                        }
+                    });
+                }
+                
+                // 2. Add text prompt
+                contentParts.push({ text: prompt });
+
+                const { text, sources } = await fetchWithRetry(contentParts);
 
                 // Update results UI
                 resultContent.innerHTML = formatMarkdownToHtml(text);
@@ -233,7 +309,7 @@
                 // Hide loading and re-enable button
                 loading.classList.add('hidden');
                 analyzeButton.disabled = false;
-                analyzeButton.textContent = "Analyze Food";
+                analyzeButton.textContent = "Analyze Food (Text & Image)";
             }
         }
         
@@ -245,7 +321,7 @@
         }
 
         /**
-         * Simple function to convert basic markdown formatting (headers, lists, bold) to HTML.
+         * Simple function to convert basic markdown formatting to HTML. (Remains the same)
          */
         function formatMarkdownToHtml(markdown) {
             let html = markdown;
