@@ -3,13 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Food Awareness Analyst</title>
-    
-    <!-- !!! START GOOGLE ANALYTICS CODE (OPTIONAL) !!! -->
-    <!-- 
-        If you completed the previous step, paste your Google Analytics script here.
-    -->
-    <!-- !!! END GOOGLE ANALYTICS CODE !!! -->
+    <title>My Custom Food Analyzer</title> 
     
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -54,7 +48,7 @@
     <div id="app" class="w-full max-w-4xl space-y-8">
         <!-- Header -->
         <header class="text-center space-y-2 mb-8">
-            <h1 class="text-4xl font-extrabold text-gray-900">Food Analyst AI</h1>
+            <h1 class="text-4xl font-extrabold text-gray-900">My Custom Food Analyzer</h1>
             <p class="text-lg text-gray-500">
                 Analyze food from a photo, a recipe, or an ingredient list!
             </p>
@@ -70,13 +64,13 @@
 
             <!-- Image Preview -->
             <div id="imagePreviewContainer" class="hidden mb-4 p-3 border border-gray-200 rounded-lg bg-gray-50">
-                <p class="text-sm font-medium text-gray-600 mb-2">Image Preview:</p>
+                <p class="text-sm font-medium text-gray-600 mb-2">Uploaded Image Preview:</p>
                 <img id="imagePreview" class="max-w-full h-auto rounded-lg shadow-md mx-auto max-h-48 object-contain" src="#" alt="Food Image Preview">
             </div>
 
-            <label for="foodInput" class="block text-lg font-semibold text-gray-700 mb-3">2. Describe or Ask Questions (Mandatory)</label>
+            <label for="foodInput" class="block text-lg font-semibold text-gray-700 mb-3">2. Describe or Ask Questions (Optional)</label>
             <textarea id="foodInput" rows="3"
-                      placeholder="e.g., 'Analyze the nutrients in the dish above', or 'What are the main ingredients in this photo?'"
+                      placeholder="e.g., 'Analyze the nutrients in the dish above', or 'What are the main ingredients in this recipe?'"
                       class="w-full p-4 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out resize-none text-gray-800"></textarea>
 
             <button id="analyzeButton"
@@ -101,7 +95,7 @@
 
             <!-- Analysis Result Card -->
             <div id="analysisResult" class="hidden bg-white p-6 sm:p-8 rounded-xl shadow-2xl border border-gray-100 space-y-6">
-                <h2 class="text-3xl font-bold text-gray-900 section-title">Analysis Complete</h2>
+                <h2 class="text-2xl font-bold text-gray-900 section-title">Health Analysis</h2>
                 <div id="resultContent" class="text-gray-700 leading-relaxed whitespace-pre-wrap"></div>
 
                 <!-- Source Attribution -->
@@ -123,14 +117,17 @@
     </div>
 
     <script type="module">
-        // Basic configuration
-        // !!! IMPORTANT: If running locally, replace "" with your actual Gemini API Key !!!
+        // --- API CONFIGURATION ---
+        // !!! IMPORTANT: Replace "" with your actual Gemini API Key and make sure it is HTTP Referrer restricted in Google AI Studio!!!
         const API_KEY = "AIzaSyAfAQjLHqolL0nW4HjuDLxFp8lnA8hq8OY"; 
+        
         const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
         const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+        
         const MAX_RETRIES = 5;
         const INITIAL_BACKOFF = 1000;
 
+        // --- DOM ELEMENTS ---
         const foodInput = document.getElementById('foodInput');
         const foodImageInput = document.getElementById('foodImageInput');
         const imagePreview = document.getElementById('imagePreview');
@@ -144,6 +141,8 @@
         const errorMessage = document.getElementById('errorMessage');
         const sourceList = document.getElementById('sourceList');
 
+        // --- UTILITY FUNCTIONS ---
+        
         /**
          * Utility function to convert a file to a Base64 string.
          * @param {File} file - The image file to convert.
@@ -178,7 +177,6 @@
 
         /**
          * Converts the structured array of sources into HTML list items.
-         * (Remains the same as before)
          */
         function renderSources(sources) {
             if (!sources || sources.length === 0) {
@@ -193,6 +191,50 @@
                 </li>
             `).join('');
         }
+
+        /**
+         * Simple function to convert basic markdown formatting to HTML.
+         */
+        function formatMarkdownToHtml(markdown) {
+            let html = markdown;
+            
+            // Replace bold text: **text** or __text__ -> <strong>text</strong>
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+
+            // Replace headers (H2 and H3-like formatting) with styling
+            html = html.replace(/### (.*?)\n/g, '<h3 class="text-xl font-bold text-gray-800 mt-4 mb-2 section-title">$1</h3>\n');
+            html = html.replace(/## (.*?)\n/g, '<h2 class="text-2xl font-bold text-gray-800 mt-6 mb-3 section-title">$1</h2>\n');
+
+            // Replace list items: * item or - item -> <ul><li>item
+            html = html.replace(/(\* | - )([^\n]+)/g, '<li>$2</li>');
+            html = html.replace(/(<li>.*?<\/li>)/gs, (match) => {
+                if (match.startsWith('<li>') && !match.includes('</ul')) {
+                    return `<ul>${match}</ul>`;
+                }
+                return match;
+            });
+            html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+
+            // Replace newlines with paragraph breaks, but respect list structure
+            html = html.replace(/(\r\n|\n\r|\r|\n)/g, (match, p1, offset, string) => {
+                const contextCheck = string.substring(offset - 10, offset + 10);
+                if (contextCheck.includes('<li>') || contextCheck.includes('<h')) {
+                    return '\n';
+                }
+                return '</p><p>';
+            });
+            
+            if (!html.trim().match(/<h|<ul|<p/i)) {
+                html = `<p>${html}</p>`;
+            }
+            
+            html = html.replace(/<p><\/p>/g, '').trim();
+
+            return html;
+        }
+
 
         /**
          * Calls the Gemini API with exponential backoff for food analysis.
@@ -256,7 +298,8 @@
             }
         }
 
-        // Main analysis function
+
+        // --- MAIN ANALYSIS LOGIC ---
         window.analyzeFood = async function() {
             const prompt = foodInput.value.trim();
             const imageFile = foodImageInput.files[0];
@@ -265,11 +308,7 @@
                 showError("Please provide a food description or upload a photo to analyze.");
                 return;
             }
-            if (!prompt && imageFile) {
-                 showError("Please provide a text prompt to tell the AI what to analyze in the photo (e.g., 'Analyze the nutrients in this dish').");
-                 return;
-            }
-
+            
             // Reset UI and show loading
             resultContainer.classList.remove('hidden');
             analysisResult.classList.add('hidden');
@@ -292,8 +331,8 @@
                     });
                 }
                 
-                // 2. Add text prompt
-                contentParts.push({ text: prompt });
+                // 2. Add text prompt (or empty string if only image provided)
+                contentParts.push({ text: prompt || "Analyze this food item." });
 
                 const { text, sources } = await fetchWithRetry(contentParts);
 
@@ -318,55 +357,6 @@
             errorMessage.textContent = message;
             errorBox.classList.remove('hidden');
             analysisResult.classList.add('hidden');
-        }
-
-        /**
-         * Simple function to convert basic markdown formatting to HTML. (Remains the same)
-         */
-        function formatMarkdownToHtml(markdown) {
-            let html = markdown;
-            
-            // Replace bold text: **text** or __text__ -> <strong>text</strong>
-            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
-
-            // Replace headers (H2 and H3-like formatting) with styling
-            html = html.replace(/### (.*?)\n/g, '<h3 class="text-xl font-bold text-gray-800 mt-4 mb-2 section-title">$1</h3>\n');
-            html = html.replace(/## (.*?)\n/g, '<h2 class="text-2xl font-bold text-gray-800 mt-6 mb-3 section-title">$1</h2>\n');
-
-            // Replace list items: * item or - item -> <ul><li>item
-            html = html.replace(/(\* | - )([^\n]+)/g, '<li>$2</li>');
-            html = html.replace(/(<li>.*?<\/li>)/gs, (match) => {
-                // Wrap list items that are consecutive in an unordered list
-                if (match.startsWith('<li>') && !match.includes('</ul')) {
-                    return `<ul>${match}</ul>`;
-                }
-                return match;
-            });
-            // Clean up potentially multiple <ul> tags created by the simple regex above
-            html = html.replace(/<\/ul>\s*<ul>/g, '');
-
-
-            // Replace newlines with paragraph breaks, but respect list structure
-            html = html.replace(/(\r\n|\n\r|\r|\n)/g, (match, p1, offset, string) => {
-                // If the surrounding text is a list item or a header, keep a simple newline
-                const contextCheck = string.substring(offset - 10, offset + 10);
-                if (contextCheck.includes('<li>') || contextCheck.includes('<h')) {
-                    return '\n';
-                }
-                // Otherwise, treat it as a new paragraph
-                return '</p><p>';
-            });
-            
-            // Wrap the whole thing in a <p> tag if it doesn't start with a known block element
-            if (!html.trim().match(/<h|<ul|<p/i)) {
-                html = `<p>${html}</p>`;
-            }
-            
-            // Replace any leading/trailing empty <p> tags
-            html = html.replace(/<p><\/p>/g, '').trim();
-
-            return html;
         }
 
     </script>
