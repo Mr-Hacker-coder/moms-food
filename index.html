@@ -129,268 +129,283 @@
     </div>
 
     <script type="module">
-        // --- API CONFIGURATION ---
-        // !!! IMPORTANT: If running locally, replace "" with your actual Gemini API Key !!!
-        const API_KEY = "AIzaSyCrfjPX0IAvn6lbges5bc304qRb_TTe4IU"; 
+    // --- API CONFIGURATION ---
+    // !!! IMPORTANT: If running on a live site, replace "" with your actual Gemini API Key !!!
+    // THIS IS THE ONLY LINE YOU NEED TO CHANGE.
+    const API_KEY = "AIzaSyCrfjPX0IAvn6lbges5bc304qRb_TTe4IU"; // <-- PASTE YOUR KEY HERE
+    
+    const TEXT_MODEL = "gemini-2.5-flash-preview-09-2025";
+    const IMAGE_MODEL = "imagen-4.0-generate-001";
+    
+    // Base API URL components (fixed)
+    const BASE_GENERATE_URL = `https://generativelanguage.googleapis.com/v1beta/models/`;
+    const BASE_PREDICT_URL = `https://generativelanguage.googleapis.com/v1beta/models/`;
+
+    const MAX_RETRIES = 5;
+    const INITIAL_BACKOFF = 1000;
+
+    // --- DOM ELEMENTS (find these in your HTML) ---
+    const foodInput = document.getElementById('foodInput');
+    const foodImageInput = document.getElementById('foodImageInput');
+    const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+    const analyzeButton = document.getElementById('analyzeButton');
+    const resultContainer = document.getElementById('resultContainer');
+    const analysisResult = document.getElementById('analysisResult');
+    const textLoading = document.getElementById('textLoading');
+    const imageLoading = document.getElementById('imageLoading');
+    const dishImage = document.getElementById('dishImage');
+    const resultContent = document.getElementById('resultContent');
+    const errorBox = document.getElementById('errorBox');
+    const errorMessage = document.getElementById('errorMessage');
+    const sourceList = document.getElementById('sourceList');
+    const imageError = document.getElementById('imageError');
+
+
+    // --- UTILITY FUNCTIONS ---
+
+    function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]); 
+            reader.onerror = error => reject(error);
+            reader.readAsDataURL(file);
+        });
+    }
+    
+    window.previewImage = function(event) {
+        const file = event.target.files[0];
+        const imagePreview = document.getElementById('imagePreview');
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                imagePreview.src = e.target.result;
+                imagePreviewContainer.classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        } else {
+            imagePreview.src = '#';
+            imagePreviewContainer.classList.add('hidden');
+        }
+    }
+
+    function renderSources(sources) {
+        if (!sources || sources.length === 0) {
+            return '<li>No specific external web sources were used to ground this response.</li>';
+        }
+        return sources.map(source => `
+            <li>
+                <a href="${source.uri}" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:text-blue-700 underline transition duration-150">
+                    ${source.title}
+                </a>
+                <span class="text-xs text-gray-400 ml-2">(${new URL(source.uri).hostname})</span>
+            </li>
+        `).join('');
+    }
+
+    function formatMarkdownToHtml(markdown) {
+        let html = markdown;
         
-        const TEXT_MODEL = "gemini-2.5-flash-preview-09-2025";
-        const IMAGE_MODEL = "imagen-4.0-generate-001"; // Better for generic image generation
+        // Replace bold text: **text** or __text__ -> <strong>text</strong>
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+
+        // Replace headers (H2 and H3-like formatting) with styling
+        html = html.replace(/### (.*?)\n/g, '<h3 class="text-xl font-bold text-gray-800 mt-4 mb-2 section-title">$1</h3>\n');
+        html = html.replace(/## (.*?)\n/g, '<h2 class="text-2xl font-bold text-gray-800 mt-6 mb-3 section-title">$1</h2>\n');
+
+        // Replace list items: * item or - item -> <ul><li>item
+        html = html.replace(/(\* | - )([^\n]+)/g, '<li>$2</li>');
+        html = html.replace(/(<li>.*?<\/li>)/gs, (match) => {
+            if (match.startsWith('<li>') && !match.includes('</ul')) {
+                return `<ul>${match}</ul>`;
+            }
+            return match;
+        });
+        html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+        html = html.replace(/(\r\n|\n\r|\r|\n)/g, (match, p1, offset, string) => {
+            const contextCheck = string.substring(offset - 10, offset + 10);
+            if (contextCheck.includes('<li>') || contextCheck.includes('<h')) {
+                return '\n';
+            }
+            return '</p><p>';
+        });
         
-        const TEXT_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${API_KEY}`;
-        const IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGE_MODEL}:predict?key=${API_KEY}`;
-        
-        const MAX_RETRIES = 5;
-        const INITIAL_BACKOFF = 1000;
-
-        // --- DOM ELEMENTS ---
-        const foodInput = document.getElementById('foodInput');
-        const foodImageInput = document.getElementById('foodImageInput');
-        const imagePreviewContainer = document.getElementById('imagePreviewContainer');
-        const analyzeButton = document.getElementById('analyzeButton');
-        const resultContainer = document.getElementById('resultContainer');
-        const analysisResult = document.getElementById('analysisResult');
-        const textLoading = document.getElementById('textLoading');
-        const imageLoading = document.getElementById('imageLoading');
-        const dishImage = document.getElementById('dishImage');
-        const resultContent = document.getElementById('resultContent');
-        const errorBox = document.getElementById('errorBox');
-        const errorMessage = document.getElementById('errorMessage');
-        const sourceList = document.getElementById('sourceList');
-        const imageError = document.getElementById('imageError');
-
-
-        // --- UTILITY FUNCTIONS ---
-
-        function fileToBase64(file) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result.split(',')[1]); 
-                reader.onerror = error => reject(error);
-                reader.readAsDataURL(file);
-            });
+        if (!html.trim().match(/<h|<ul|<p/i)) {
+            html = `<p>${html}</p>`;
         }
         
-        window.previewImage = function(event) {
-            const file = event.target.files[0];
-            const imagePreview = document.getElementById('imagePreview');
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    imagePreview.src = e.target.result;
-                    imagePreviewContainer.classList.remove('hidden');
-                };
-                reader.readAsDataURL(file);
+        html = html.replace(/<p><\/p>/g, '').trim();
+
+        return html;
+    }
+
+    /**
+     * Generic fetch with exponential backoff for API calls.
+     */
+    async function fetchWithRetry(fullUrl, payload, method = 'POST', retryCount = 0) {
+        try {
+            const response = await fetch(fullUrl, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                if (response.status === 429 && retryCount < MAX_RETRIES) {
+                    const backoffTime = INITIAL_BACKOFF * Math.pow(2, retryCount) + Math.random() * 1000;
+                    await new Promise(resolve => setTimeout(resolve, backoffTime));
+                    return fetchWithRetry(fullUrl, payload, method, retryCount + 1);
+                }
+                // Capture the detailed status for better debugging
+                const errorText = await response.text(); 
+                throw new Error(`API Request failed with status: ${response.status}. Details: ${errorText}`);
+            }
+            return response.json();
+        } catch (error) {
+            console.error("API Fetch Error:", error);
+            throw new Error(error.message || "Failed to connect or process the request.");
+        }
+    }
+    
+    // --- IMAGE GENERATION LOGIC ---
+
+    async function generateDishImage(prompt) {
+        imageError.classList.add('hidden');
+        dishImage.classList.add('hidden');
+        imageLoading.classList.remove('hidden');
+
+        const imagePrompt = `A photo-realistic, high-quality image of a beautifully plated serving of the following food dish: "${prompt}". Focus on appetizing presentation.`;
+        
+        const payload = { 
+            instances: { prompt: imagePrompt }, 
+            parameters: { "sampleCount": 1} 
+        };
+        
+        // CONSTRUCTING THE IMAGE URL HERE
+        const IMAGE_API_URL = `${BASE_PREDICT_URL}${IMAGE_MODEL}:predict?key=${API_KEY}`;
+
+        try {
+            const result = await fetchWithRetry(IMAGE_API_URL, payload);
+            
+            if (result.predictions && result.predictions.length > 0 && result.predictions[0].bytesBase64Encoded) {
+                const base64Data = result.predictions[0].bytesBase64Encoded;
+                dishImage.src = `data:image/png;base64,${base64Data}`;
+                dishImage.classList.remove('hidden');
             } else {
-                imagePreview.src = '#';
-                imagePreviewContainer.classList.add('hidden');
-            }
-        }
-
-        function renderSources(sources) {
-            if (!sources || sources.length === 0) {
-                return '<li>No specific external web sources were used to ground this response.</li>';
-            }
-            return sources.map(source => `
-                <li>
-                    <a href="${source.uri}" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:text-blue-700 underline transition duration-150">
-                        ${source.title}
-                    </a>
-                    <span class="text-xs text-gray-400 ml-2">(${new URL(source.uri).hostname})</span>
-                </li>
-            `).join('');
-        }
-
-        function formatMarkdownToHtml(markdown) {
-            let html = markdown;
-            
-            // Replace bold text: **text** or __text__ -> <strong>text</strong>
-            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
-
-            // Replace headers (H2 and H3-like formatting) with styling
-            html = html.replace(/### (.*?)\n/g, '<h3 class="text-xl font-bold text-gray-800 mt-4 mb-2 section-title">$1</h3>\n');
-            html = html.replace(/## (.*?)\n/g, '<h2 class="text-2xl font-bold text-gray-800 mt-6 mb-3 section-title">$1</h2>\n');
-
-            // Replace list items: * item or - item -> <ul><li>item
-            html = html.replace(/(\* | - )([^\n]+)/g, '<li>$2</li>');
-            html = html.replace(/(<li>.*?<\/li>)/gs, (match) => {
-                if (match.startsWith('<li>') && !match.includes('</ul')) {
-                    return `<ul>${match}</ul>`;
-                }
-                return match;
-            });
-            html = html.replace(/<\/ul>\s*<ul>/g, '');
-
-            html = html.replace(/(\r\n|\n\r|\r|\n)/g, (match, p1, offset, string) => {
-                const contextCheck = string.substring(offset - 10, offset + 10);
-                if (contextCheck.includes('<li>') || contextCheck.includes('<h')) {
-                    return '\n';
-                }
-                return '</p><p>';
-            });
-            
-            if (!html.trim().match(/<h|<ul|<p/i)) {
-                html = `<p>${html}</p>`;
-            }
-            
-            html = html.replace(/<p><\/p>/g, '').trim();
-
-            return html;
-        }
-
-        /**
-         * Generic fetch with exponential backoff for API calls.
-         */
-        async function fetchWithRetry(url, payload, method = 'POST', retryCount = 0) {
-            try {
-                const response = await fetch(url, {
-                    method: method,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    if (response.status === 429 && retryCount < MAX_RETRIES) {
-                        const backoffTime = INITIAL_BACKOFF * Math.pow(2, retryCount) + Math.random() * 1000;
-                        await new Promise(resolve => setTimeout(resolve, backoffTime));
-                        return fetchWithRetry(url, payload, method, retryCount + 1);
-                    }
-                    throw new Error(`API Request failed with status: ${response.status}`);
-                }
-                return response.json();
-            } catch (error) {
-                console.error("API Fetch Error:", error);
-                throw new Error("Failed to connect or process the request.");
-            }
-        }
-        
-        // --- IMAGE GENERATION LOGIC ---
-
-        async function generateDishImage(prompt) {
-            imageError.classList.add('hidden');
-            dishImage.classList.add('hidden');
-            imageLoading.classList.remove('hidden');
-
-            const imagePrompt = `A photo-realistic, high-quality image of a beautifully plated serving of the following food dish: "${prompt}". Focus on appetizing presentation.`;
-            
-            const payload = { 
-                instances: { prompt: imagePrompt }, 
-                parameters: { "sampleCount": 1} 
-            };
-
-            try {
-                const result = await fetchWithRetry(IMAGE_API_URL, payload);
-                
-                if (result.predictions && result.predictions.length > 0 && result.predictions[0].bytesBase64Encoded) {
-                    const base64Data = result.predictions[0].bytesBase64Encoded;
-                    dishImage.src = `data:image/png;base64,${base64Data}`;
-                    dishImage.classList.remove('hidden');
-                } else {
-                    throw new Error("No image data received.");
-                }
-
-            } catch (error) {
-                imageError.textContent = "Image generation failed. Try a different dish name.";
-                imageError.classList.remove('hidden');
-            } finally {
-                imageLoading.classList.add('hidden');
-            }
-        }
-
-
-        // --- MAIN ANALYSIS LOGIC ---
-
-        async function fetchTextAnalysis(contentParts) {
-            const systemPrompt = `You are a friendly and professional Food Health Analyst. Analyze the input, which may include text, a photo, or both. If a photo is provided, focus your analysis on the visible food. Provide a detailed, objective analysis structured clearly:
-                1. **Summary & Key Nutritional Facts:** (Identify the dish/ingredients and summarize key nutrients).
-                2. **Potential Allergens & Concerns:** (List common allergens and health concerns like high sodium or sugar).
-                3. **Healthy Alternatives:** (Provide one or two simple substitutions or modifications).
-                Maintain a helpful, informative, and easy-to-understand tone.`;
-            
-            const payload = {
-                contents: [{ parts: contentParts }],
-                tools: [{ "google_search": {} }], 
-                systemInstruction: { parts: [{ text: systemPrompt }] },
-            };
-
-            const result = await fetchWithRetry(TEXT_API_URL, payload);
-            
-            const candidate = result.candidates?.[0];
-            if (!candidate || !candidate.content?.parts?.[0]?.text) {
-                throw new Error("Received an empty or malformed text response from the model.");
+                throw new Error("No image data received from the Image API.");
             }
 
-            const text = candidate.content.parts[0].text;
-            let sources = [];
-            const groundingMetadata = candidate.groundingMetadata;
-            if (groundingMetadata && groundingMetadata.groundingAttributions) {
-                sources = groundingMetadata.groundingAttributions
-                    .map(attribution => ({ uri: attribution.web?.uri, title: attribution.web?.title }))
-                    .filter(source => source.uri && source.title);
-            }
-            return { text, sources };
-        }
-
-        window.analyzeFood = async function() {
-            const prompt = foodInput.value.trim();
-            const imageFile = foodImageInput.files[0];
-
-            if (!prompt) {
-                showError("Please provide a text description of the dish to analyze and generate an image.");
-                return;
-            }
-
-            // --- Reset UI and show loading for Text Analysis ---
-            resultContainer.classList.remove('hidden');
-            analysisResult.classList.add('hidden');
-            errorBox.classList.add('hidden');
-            textLoading.classList.remove('hidden');
-            analyzeButton.disabled = true;
-            analyzeButton.textContent = "Analyzing...";
-            dishImage.classList.add('hidden'); // Hide previous image
-            imageError.classList.add('hidden'); // Hide previous image error
-
-            try {
-                // 1. Prepare content for Text Analysis (Text + optional uploaded Image)
-                const contentParts = [];
-                if (imageFile) {
-                    const base64Data = await fileToBase64(imageFile);
-                    contentParts.push({ inlineData: { mimeType: imageFile.type, data: base64Data } });
-                }
-                contentParts.push({ text: prompt });
-
-                // 2. Perform Text Analysis
-                const { text, sources } = await fetchTextAnalysis(contentParts);
-                
-                // 3. Update Text Results UI
-                resultContent.innerHTML = formatMarkdownToHtml(text);
-                sourceList.innerHTML = renderSources(sources);
-                analysisResult.classList.remove('hidden');
-                
-                // 4. Start Image Generation (uses the main text prompt)
-                analyzeButton.textContent = "Generating Image...";
-                await generateDishImage(prompt);
-
-            } catch (error) {
-                showError(error.message);
-            } finally {
-                // Hide loading and re-enable button
-                textLoading.classList.add('hidden');
-                imageLoading.classList.add('hidden');
-                analyzeButton.disabled = false;
-                analyzeButton.textContent = "Analyze & Generate Image";
-            }
-        }
-        
-        // Utility function to display errors
-        function showError(message) {
-            errorMessage.textContent = message;
-            errorBox.classList.remove('hidden');
-            analysisResult.classList.add('hidden');
-            textLoading.classList.add('hidden');
+        } catch (error) {
+            imageError.textContent = "Image generation failed. Try a different dish name.";
+            imageError.classList.remove('hidden');
+        } finally {
             imageLoading.classList.add('hidden');
         }
+    }
 
-    </script>
+
+    // --- MAIN ANALYSIS LOGIC ---
+
+    async function fetchTextAnalysis(contentParts) {
+        const systemPrompt = `You are a friendly and professional Food Health Analyst. Analyze the input, which may include text, a photo, or both. If a photo is provided, focus your analysis on the visible food. Provide a detailed, objective analysis structured clearly:
+            1. **Summary & Key Nutritional Facts:** (Identify the dish/ingredients and summarize key nutrients).
+            2. **Potential Allergens & Concerns:** (List common allergens and health concerns like high sodium or sugar).
+            3. **Healthy Alternatives:** (Provide one or two simple substitutions or modifications).
+            Maintain a helpful, informative, and easy-to-understand tone.`;
+        
+        const payload = {
+            contents: [{ parts: contentParts }],
+            tools: [{ "google_search": {} }], 
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+        };
+        
+        // CONSTRUCTING THE TEXT URL HERE
+        const TEXT_API_URL = `${BASE_GENERATE_URL}${TEXT_MODEL}:generateContent?key=${API_KEY}`;
+
+        const result = await fetchWithRetry(TEXT_API_URL, payload);
+        
+        const candidate = result.candidates?.[0];
+        if (!candidate || !candidate.content?.parts?.[0]?.text) {
+            throw new Error("Received an empty or malformed text response from the model.");
+        }
+
+        const text = candidate.content.parts[0].text;
+        let sources = [];
+        const groundingMetadata = candidate.groundingMetadata;
+        if (groundingMetadata && groundingMetadata.groundingAttributions) {
+            sources = groundingMetadata.groundingAttributions
+                .map(attribution => ({ uri: attribution.web?.uri, title: attribution.web?.title }))
+                .filter(source => source.uri && source.title);
+        }
+        return { text, sources };
+    }
+
+    window.analyzeFood = async function() {
+        const prompt = foodInput.value.trim();
+        const imageFile = foodImageInput.files[0];
+
+        if (API_KEY === "") {
+            showError("API Key is missing! Please insert your Gemini API Key into the 'const API_KEY' variable in the script.");
+            return;
+        }
+
+        if (!prompt) {
+            showError("Please provide a text description of the dish to analyze and generate an image.");
+            return;
+        }
+
+        // --- Reset UI and show loading for Text Analysis ---
+        resultContainer.classList.remove('hidden');
+        analysisResult.classList.add('hidden');
+        errorBox.classList.add('hidden');
+        textLoading.classList.remove('hidden');
+        analyzeButton.disabled = true;
+        analyzeButton.textContent = "Analyzing...";
+        dishImage.classList.add('hidden'); 
+        imageError.classList.add('hidden');
+
+        try {
+            // 1. Prepare content for Text Analysis (Text + optional uploaded Image)
+            const contentParts = [];
+            if (imageFile) {
+                const base64Data = await fileToBase64(imageFile);
+                contentParts.push({ inlineData: { mimeType: imageFile.type, data: base64Data } });
+            }
+            contentParts.push({ text: prompt });
+
+            // 2. Perform Text Analysis
+            const { text, sources } = await fetchTextAnalysis(contentParts);
+            
+            // 3. Update Text Results UI
+            resultContent.innerHTML = formatMarkdownToHtml(text);
+            sourceList.innerHTML = renderSources(sources);
+            analysisResult.classList.remove('hidden');
+            
+            // 4. Start Image Generation (uses the main text prompt)
+            analyzeButton.textContent = "Generating Image...";
+            await generateDishImage(prompt);
+
+        } catch (error) {
+            showError(error.message);
+        } finally {
+            // Hide loading and re-enable button
+            textLoading.classList.add('hidden');
+            imageLoading.classList.add('hidden');
+            analyzeButton.disabled = false;
+            analyzeButton.textContent = "Analyze & Generate Image";
+        }
+    }
+    
+    // Utility function to display errors
+    function showError(message) {
+        errorMessage.textContent = message;
+        errorBox.classList.remove('hidden');
+        analysisResult.classList.add('hidden');
+        textLoading.classList.add('hidden');
+        imageLoading.classList.add('hidden');
+    }
+
+</script>
 </body>
 </html>
