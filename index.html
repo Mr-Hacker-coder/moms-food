@@ -3,7 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Custom Food Analyzer</title> 
+    <title>Food Awareness Analyst</title>
+    
+    <!-- !!! START GOOGLE ANALYTICS CODE (OPTIONAL) !!! -->
+    <!-- 
+        If you completed the previous step, paste your Google Analytics script here.
+    -->
+    <!-- !!! END GOOGLE ANALYTICS CODE !!! -->
     
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -29,13 +35,17 @@
             background-color: #3b82f6; /* Blue-500 */
             border-radius: 9999px;
         }
-        /* Style for Image Generation Loading */
-        #imageLoading div {
-            border-top-color: #3b82f6;
-            animation: spin 1s linear infinite;
+        .loading-dot {
+            animation: dot-pulse 1.5s infinite;
+            display: inline-block;
+            margin: 0 2px;
         }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+        .loading-dot:nth-child(1) { animation-delay: 0.0s; }
+        .loading-dot:nth-child(2) { animation-delay: 0.3s; }
+        .loading-dot:nth-child(3) { animation-delay: 0.6s; }
+        @keyframes dot-pulse {
+            0%, 80%, 100% { opacity: 0.2; transform: scale(1); }
+            40% { opacity: 1; transform: scale(1.2); }
         }
     </style>
 </head>
@@ -44,7 +54,7 @@
     <div id="app" class="w-full max-w-4xl space-y-8">
         <!-- Header -->
         <header class="text-center space-y-2 mb-8">
-            <h1 class="text-4xl font-extrabold text-gray-900">My Custom Food Analyzer</h1>
+            <h1 class="text-4xl font-extrabold text-gray-900">Food Analyst AI</h1>
             <p class="text-lg text-gray-500">
                 Analyze food from a photo, a recipe, or an ingredient list!
             </p>
@@ -58,42 +68,40 @@
                    class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out text-gray-800 mb-4"
                    onchange="previewImage(event)">
 
-            <!-- Image Preview (for uploaded image) -->
+            <!-- Image Preview -->
             <div id="imagePreviewContainer" class="hidden mb-4 p-3 border border-gray-200 rounded-lg bg-gray-50">
-                <p class="text-sm font-medium text-gray-600 mb-2">Uploaded Image Preview:</p>
+                <p class="text-sm font-medium text-gray-600 mb-2">Image Preview:</p>
                 <img id="imagePreview" class="max-w-full h-auto rounded-lg shadow-md mx-auto max-h-48 object-contain" src="#" alt="Food Image Preview">
             </div>
 
-            <label for="foodInput" class="block text-lg font-semibold text-gray-700 mb-3">2. Describe the Dish (Mandatory)</label>
+            <label for="foodInput" class="block text-lg font-semibold text-gray-700 mb-3">2. Describe or Ask Questions (Mandatory)</label>
             <textarea id="foodInput" rows="3"
-                      placeholder="e.g., 'A bowl of spicy ramen noodles with an egg and pork belly', or 'Recipe for chocolate chip cookies'"
+                      placeholder="e.g., 'Analyze the nutrients in the dish above', or 'What are the main ingredients in this photo?'"
                       class="w-full p-4 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out resize-none text-gray-800"></textarea>
 
             <button id="analyzeButton"
                     class="mt-4 w-full sm:w-auto px-6 py-3 bg-blue-600 text-white font-semibold text-lg rounded-xl hover:bg-blue-700 transition duration-200 ease-in-out shadow-lg transform hover:scale-[1.01] active:scale-[0.99]"
                     onclick="analyzeFood()">
-                Analyze & Generate Image
+                Analyze Food (Text & Image)
             </button>
         </section>
 
         <!-- Loading Indicator & Results Section -->
         <section id="resultContainer" class="hidden">
-            <!-- Loading State for Text Analysis -->
-            <div id="textLoading" class="hidden text-center py-6">
+            <!-- Loading State -->
+            <div id="loading" class="hidden text-center py-12">
                 <div class="text-blue-600 text-2xl font-bold">
-                    Analyzing food details...
+                    Analyzing ingredients
                     <span class="loading-dot">.</span>
                     <span class="loading-dot">.</span>
                     <span class="loading-dot">.</span>
                 </div>
+                <p class="text-gray-500 mt-2">Connecting to health databases and expert systems...</p>
             </div>
 
             <!-- Analysis Result Card -->
             <div id="analysisResult" class="hidden bg-white p-6 sm:p-8 rounded-xl shadow-2xl border border-gray-100 space-y-6">
-            
-                
-                <!-- Text Analysis Content -->
-                <h2 class="text-2xl font-bold text-gray-900 section-title pt-4">Health Analysis</h2>
+                <h2 class="text-3xl font-bold text-gray-900 section-title">Analysis Complete</h2>
                 <div id="resultContent" class="text-gray-700 leading-relaxed whitespace-pre-wrap"></div>
 
                 <!-- Source Attribution -->
@@ -115,7 +123,7 @@
     </div>
 
     <script type="module">
-        // --- API CONFIGURATION ---
+// --- API CONFIGURATION ---
 // ⚠️ IMPORTANT: If running on a live site like GitHub Pages, replace "YOUR_NEW_KEY_HERE" with your actual Gemini API Key.
 // The previous key was leaked and disabled. You MUST use a brand new key here.
 const FALLBACK_API_KEY = "AIzaSyAfAQjLHqolL0nW4HjuDLxFp8lnA8hq8OY"; 
@@ -125,7 +133,6 @@ const FALLBACK_API_KEY = "AIzaSyAfAQjLHqolL0nW4HjuDLxFp8lnA8hq8OY";
 const API_KEY = typeof __gemini_api_key !== 'undefined' ? __gemini_api_key : FALLBACK_API_KEY;
 
 const TEXT_MODEL = "gemini-2.5-flash-preview-09-2025";
-const IMAGE_MODEL = "imagen-4.0-generate-001";
 
 // Base API URL components (fixed)
 const BASE_GENERATE_URL = `https://generativelanguage.googleapis.com/v1beta/models/`;
@@ -142,8 +149,6 @@ const analyzeButton = document.getElementById('analyzeButton');
 const resultContainer = document.getElementById('resultContainer');
 const analysisResult = document.getElementById('analysisResult');
 const textLoading = document.getElementById('textLoading');
-const imageLoading = document.getElementById('imageLoading');
-const dishImage = document.getElementById('dishImage');
 const resultContent = document.getElementById('resultContent');
 const errorBox = document.getElementById('errorBox');
 const errorMessage = document.getElementById('errorMessage');
@@ -263,7 +268,6 @@ async function fetchWithRetry(fullUrl, payload, method = 'POST', retryCount = 0)
 async function generateDishImage(prompt) {
     imageError.classList.add('hidden');
     dishImage.classList.add('hidden');
-    imageLoading.classList.remove('hidden');
 
     const imagePrompt = `A photo-realistic, high-quality image of a beautifully plated serving of the following food dish: "${prompt}". Focus on appetizing presentation.`;
     
@@ -396,6 +400,55 @@ function showError(message) {
     imageLoading.classList.add('hidden');
 }
 
-</script>
+        /**
+         * Simple function to convert basic markdown formatting to HTML. (Remains the same)
+         */
+        function formatMarkdownToHtml(markdown) {
+            let html = markdown;
+            
+            // Replace bold text: **text** or __text__ -> <strong>text</strong>
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+
+            // Replace headers (H2 and H3-like formatting) with styling
+            html = html.replace(/### (.*?)\n/g, '<h3 class="text-xl font-bold text-gray-800 mt-4 mb-2 section-title">$1</h3>\n');
+            html = html.replace(/## (.*?)\n/g, '<h2 class="text-2xl font-bold text-gray-800 mt-6 mb-3 section-title">$1</h2>\n');
+
+            // Replace list items: * item or - item -> <ul><li>item
+            html = html.replace(/(\* | - )([^\n]+)/g, '<li>$2</li>');
+            html = html.replace(/(<li>.*?<\/li>)/gs, (match) => {
+                // Wrap list items that are consecutive in an unordered list
+                if (match.startsWith('<li>') && !match.includes('</ul')) {
+                    return `<ul>${match}</ul>`;
+                }
+                return match;
+            });
+            // Clean up potentially multiple <ul> tags created by the simple regex above
+            html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+
+            // Replace newlines with paragraph breaks, but respect list structure
+            html = html.replace(/(\r\n|\n\r|\r|\n)/g, (match, p1, offset, string) => {
+                // If the surrounding text is a list item or a header, keep a simple newline
+                const contextCheck = string.substring(offset - 10, offset + 10);
+                if (contextCheck.includes('<li>') || contextCheck.includes('<h')) {
+                    return '\n';
+                }
+                // Otherwise, treat it as a new paragraph
+                return '</p><p>';
+            });
+            
+            // Wrap the whole thing in a <p> tag if it doesn't start with a known block element
+            if (!html.trim().match(/<h|<ul|<p/i)) {
+                html = `<p>${html}</p>`;
+            }
+            
+            // Replace any leading/trailing empty <p> tags
+            html = html.replace(/<p><\/p>/g, '').trim();
+
+            return html;
+        }
+
+    </script>
 </body>
 </html>
