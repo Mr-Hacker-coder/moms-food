@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>smart Food Analyzer</title> 
+    <title>Secure Food Analyzer</title> 
     
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -48,9 +48,9 @@
     <div id="app" class="w-full max-w-4xl space-y-8">
         <!-- Header -->
         <header class="text-center space-y-2 mb-8">
-            <h1 class="text-4xl font-extrabold text-gray-900">smart Food Analyzer</h1>
+            <h1 class="text-4xl font-extrabold text-gray-900">Secure Food Analyzer</h1>
             <p class="text-lg text-gray-500">
-                Analyze food from a photo, a recipe, or an ingredient list!
+                Analyze food via a secure server proxy.
             </p>
         </header>
 
@@ -76,7 +76,7 @@
             <button id="analyzeButton"
                     class="mt-4 w-full sm:w-auto px-6 py-3 bg-blue-600 text-white font-semibold text-lg rounded-xl hover:bg-blue-700 transition duration-200 ease-in-out shadow-lg transform hover:scale-[1.01] active:scale-[0.99]"
                     onclick="analyzeFood()">
-                Analyze Food (Text & Image)
+                Analyze Food (via Secure Server)
             </button>
         </section>
 
@@ -90,7 +90,7 @@
                     <span class="loading-dot">.</span>
                     <span class="loading-dot">.</span>
                 </div>
-                <p class="text-gray-500 mt-2">Connecting to health databases and expert systems...</p>
+                <p class="text-gray-500 mt-2">Connecting securely to health databases and expert systems...</p>
             </div>
 
             <!-- Analysis Result Card -->
@@ -117,17 +117,14 @@
     </div>
 
     <script type="module">
-        // --- API CONFIGURATION ---
-        // !!! IMPORTANT: Replace "" with your actual Gemini API Key and make sure it is HTTP Referrer restricted in Google AI Studio!!!
-        const API_KEY = "AIzaSyCSvTuwyZRClh852RJ2H6XpESKvYpzFVRE"; 
-        
-        const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
-        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+        // --- API CONFIGURATION - NO API KEY EXPOSED! ---
+        // The frontend now talks to your local server (running on port 3000 by default)
+        const BACKEND_URL = 'http://localhost:3000/analyze-food'; 
         
         const MAX_RETRIES = 5;
         const INITIAL_BACKOFF = 1000;
 
-        // --- DOM ELEMENTS ---
+        // --- DOM ELEMENTS (unchanged) ---
         const foodInput = document.getElementById('foodInput');
         const foodImageInput = document.getElementById('foodImageInput');
         const imagePreview = document.getElementById('imagePreview');
@@ -141,25 +138,17 @@
         const errorMessage = document.getElementById('errorMessage');
         const sourceList = document.getElementById('sourceList');
 
-        // --- UTILITY FUNCTIONS ---
+        // --- UTILITY FUNCTIONS (unchanged) ---
         
-        /**
-         * Utility function to convert a file to a Base64 string.
-         * @param {File} file - The image file to convert.
-         * @returns {Promise<string>} Base64 encoded string of the image data.
-         */
         function fileToBase64(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
-                reader.onload = () => resolve(reader.result.split(',')[1]); // Only get the data part
+                reader.onload = () => resolve(reader.result.split(',')[1]); 
                 reader.onerror = error => reject(error);
                 reader.readAsDataURL(file);
             });
         }
         
-        /**
-         * Handles the image preview when a file is selected.
-         */
         window.previewImage = function(event) {
             const file = event.target.files[0];
             if (file) {
@@ -175,9 +164,6 @@
             }
         }
 
-        /**
-         * Converts the structured array of sources into HTML list items.
-         */
         function renderSources(sources) {
             if (!sources || sources.length === 0) {
                 return '<li>No specific external web sources were used to ground this response.</li>';
@@ -192,9 +178,6 @@
             `).join('');
         }
 
-        /**
-         * Simple function to convert basic markdown formatting to HTML.
-         */
         function formatMarkdownToHtml(markdown) {
             let html = markdown;
             
@@ -235,30 +218,18 @@
             return html;
         }
 
-
         /**
-         * Calls the Gemini API with exponential backoff for food analysis.
-         * @param {Array<Object>} contentParts - Array of content parts (text and image data).
-         * @param {number} retryCount - Current retry attempt count.
+         * Calls the secure backend server with exponential backoff.
+         * The server handles the Gemini API call securely.
          */
         async function fetchWithRetry(contentParts, retryCount = 0) {
-            const systemPrompt = `You are a friendly and professional Food Health Analyst. Analyze the input, which may include text, a photo, or both. If a photo is provided, focus your analysis on the visible food. Provide a detailed, objective analysis structured clearly:
-                1. **Summary & Key Nutritional Facts:** (Identify the dish/ingredients and summarize key nutrients).
-                2. **Potential Allergens & Concerns:** (List common allergens and health concerns like high sodium or sugar).
-                3. **Healthy Alternatives:** (Provide one or two simple substitutions or modifications).
-                Maintain a helpful, informative, and easy-to-understand tone.`;
             
-            const payload = {
-                contents: [{ parts: contentParts }],
-                tools: [{ "google_search": {} }], // Enable search grounding
-                systemInstruction: { parts: [{ text: systemPrompt }] },
-            };
-
             try {
-                const response = await fetch(API_URL, {
+                const response = await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    // Send the image and text parts in the body
+                    body: JSON.stringify({ contentParts: contentParts }) 
                 });
 
                 if (!response.ok) {
@@ -267,39 +238,24 @@
                         await new Promise(resolve => setTimeout(resolve, backoffTime));
                         return fetchWithRetry(contentParts, retryCount + 1);
                     }
-                    throw new Error(`API Request failed with status: ${response.status}`);
+                    // Attempt to parse the server error message if available
+                    const errorJson = await response.json().catch(() => ({ error: `Server error (${response.status})` }));
+                    throw new Error(errorJson.error || `Server request failed with status: ${response.status}`);
                 }
 
-                const result = await response.json();
-                const candidate = result.candidates?.[0];
-
-                if (candidate && candidate.content?.parts?.[0]?.text) {
-                    const text = candidate.content.parts[0].text;
-                    
-                    let sources = [];
-                    const groundingMetadata = candidate.groundingMetadata;
-                    if (groundingMetadata && groundingMetadata.groundingAttributions) {
-                        sources = groundingMetadata.groundingAttributions
-                            .map(attribution => ({
-                                uri: attribution.web?.uri,
-                                title: attribution.web?.title,
-                            }))
-                            .filter(source => source.uri && source.title); // Ensure sources are valid
-                    }
-                    
-                    return { text, sources };
-                } else {
-                    throw new Error("Received an empty or malformed response from the model.");
-                }
+                // The server sends back the final result object { text, sources }
+                const result = await response.json(); 
+                
+                return result; // Returns { text: '...', sources: [...] }
 
             } catch (error) {
-                console.error("Gemini API Error:", error);
-                throw new Error("Failed to connect or process the food analysis request.");
+                console.error("Backend Communication Error:", error);
+                throw new Error("Failed to process the food analysis request via the secure server. Ensure the server is running.");
             }
         }
 
 
-        // --- MAIN ANALYSIS LOGIC ---
+        // --- MAIN ANALYSIS LOGIC (modified to use the new fetchWithRetry) ---
         window.analyzeFood = async function() {
             const prompt = foodInput.value.trim();
             const imageFile = foodImageInput.files[0];
@@ -348,7 +304,7 @@
                 // Hide loading and re-enable button
                 loading.classList.add('hidden');
                 analyzeButton.disabled = false;
-                analyzeButton.textContent = "Analyze Food (Text & Image)";
+                analyzeButton.textContent = "Analyze Food (via Secure Server)";
             }
         }
         
